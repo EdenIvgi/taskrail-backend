@@ -1,6 +1,7 @@
 import { dbService } from '../../services/db.service.js'
 import { logger } from '../../services/logger.service.js'
 import { makeId } from '../../services/util.service.js'
+import { ObjectId } from 'mongodb'
 
 const BOARD_COLLECTION = 'board'
 
@@ -25,6 +26,50 @@ async function query(filterBy = { txt: '' }) {
         const collection = await dbService.getCollection(BOARD_COLLECTION)
         var boards = await collection.find(criteria).toArray()
 
+        // If no boards exist, create a demo board
+        if (boards.length === 0) {
+            const demoBoard = {
+                title: 'My First Board',
+                isStarred: true,
+                createdAt: Date.now(),
+                createdBy: null,
+                style: { backgroundColor: '#0079bf' },
+                labels: [],
+                members: [],
+                lists: [
+                    {
+                        id: makeId(),
+                        title: 'To Do',
+                        tasks: [
+                            { id: makeId(), title: 'Welcome to TaskRail!' },
+                            { id: makeId(), title: 'Click on a task to edit it' }
+                        ]
+                    },
+                    {
+                        id: makeId(),
+                        title: 'In Progress',
+                        tasks: []
+                    },
+                    {
+                        id: makeId(),
+                        title: 'Done',
+                        tasks: []
+                    }
+                ],
+                activities: [],
+                recentlyViewed: null
+            }
+            await collection.insertOne(demoBoard)
+            boards = [demoBoard]
+            logger.info('Created demo board')
+        }
+
+        // Convert _id to string for frontend
+        boards = boards.map(board => ({
+            ...board,
+            _id: board._id.toString()
+        }))
+
         return boards
     } catch (err) {
         logger.error('cannot find boards', err)
@@ -35,9 +80,13 @@ async function query(filterBy = { txt: '' }) {
 async function getById(boardId) {
     try {
         const collection = await dbService.getCollection(BOARD_COLLECTION)
-        const board = await collection.findOne({ _id: boardId })
+        const board = await collection.findOne({ _id: ObjectId.createFromHexString(boardId) })
 
         if (!board) throw new Error('Board not found')
+        
+        // Convert _id to string for frontend
+        board._id = board._id.toString()
+        
         return board
     } catch (err) {
         logger.error(`while finding board ${boardId}`, err)
@@ -48,7 +97,7 @@ async function getById(boardId) {
 async function remove(boardId) {
     try {
         const collection = await dbService.getCollection(BOARD_COLLECTION)
-        const { deletedCount } = await collection.deleteOne({ _id: boardId })
+        const { deletedCount } = await collection.deleteOne({ _id: ObjectId.createFromHexString(boardId) })
 
         if (deletedCount === 0) throw new Error('Board not found')
         return deletedCount
@@ -76,6 +125,9 @@ async function add(board) {
         const collection = await dbService.getCollection(BOARD_COLLECTION)
         await collection.insertOne(boardToAdd)
 
+        // Convert _id to string for frontend
+        boardToAdd._id = boardToAdd._id.toString()
+
         return boardToAdd
     } catch (err) {
         logger.error('cannot insert board', err)
@@ -97,7 +149,8 @@ async function update(board) {
         }
 
         const collection = await dbService.getCollection(BOARD_COLLECTION)
-        await collection.updateOne({ _id: board._id }, { $set: boardToSave })
+        const boardId = typeof board._id === 'string' ? ObjectId.createFromHexString(board._id) : board._id
+        await collection.updateOne({ _id: boardId }, { $set: boardToSave })
 
         return board
     } catch (err) {
@@ -110,9 +163,10 @@ async function addBoardMsg(boardId, msg) {
     try {
         msg.id = makeId()
         msg.createdAt = Date.now()
-
+        
+        const boardObjectId = ObjectId.createFromHexString(boardId)
         const collection = await dbService.getCollection(BOARD_COLLECTION)
-        await collection.updateOne({ _id: boardId }, { $push: { msgs: msg } })
+        await collection.updateOne({ _id: boardObjectId }, { $push: { msgs: msg } })
 
         return msg
     } catch (err) {
@@ -123,8 +177,9 @@ async function addBoardMsg(boardId, msg) {
 
 async function removeBoardMsg(boardId, msgId) {
     try {
+        const boardObjectId = ObjectId.createFromHexString(boardId)
         const collection = await dbService.getCollection(BOARD_COLLECTION)
-        await collection.updateOne({ _id: boardId }, { $pull: { msgs: { id: msgId } } })
+        await collection.updateOne({ _id: boardObjectId }, { $pull: { msgs: { id: msgId } } })
 
         return msgId
     } catch (err) {
